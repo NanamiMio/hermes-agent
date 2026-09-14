@@ -1,0 +1,49 @@
+name: Follow upstream releases
+
+on:
+  schedule:
+    - cron: "37 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mirror-tags:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag our main for each new upstream release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git remote add upstream https://github.com/NousResearch/hermes-agent.git || true
+          git fetch upstream --tags --force
+          git fetch origin main --tags --force
+          git checkout main
+          git reset --hard origin/main
+          # Upstream tags look like v2026.9.11
+          for tag in $(git ls-remote --tags upstream | awk '{print $2}' | sed 's|refs/tags/||;s|\^{}||' | grep -E '^v20[0-9]{2}\.' | sort -u); do
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+              continue
+            fi
+            upstream_sha=$(git rev-list -n 1 "refs/tags/$tag" 2>/dev/null || true)
+            [ -z "$upstream_sha" ] && continue
+            # Only tag if our main already contains the upstream release commit
+            # (sync-upstream runs 20 min earlier; otherwise skip and retry tomorrow).
+            if ! git merge-base --is-ancestor "$upstream_sha" HEAD 2>/dev/null; then
+              echo "SKIP $tag: upstream commit not yet merged into our main"
+              continue
+            fi
+            echo "Tagging our main HEAD as $tag (follows upstream $tag @ $upstream_sha)"
+            git tag -a "$tag" HEAD -m "Follow upstream release $tag (upstream commit $upstream_sha) + commandcode-oauth"
+            git push origin "refs/tags/$tag"
+            upstream_name=$(gh api "repos/NousResearch/hermes-agent/releases/tags/$tag" --jq '.name // ""' 2>/dev/null || true)
+            gh release create "$tag" \
+              --title "${upstream_name:-Hermes Agent ($tag)} + commandcode-oauth" \
+              --notes "Follows upstream release [$tag](https://github.com/NousResearch/hermes-agent/releases/tag/$tag) (upstream commit \`$upstream_sha\`), plus the commandcode-oauth provider (Go-tier CLI credentials). Install via the homebrew tap." \
+              || true
+          done

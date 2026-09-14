@@ -1,0 +1,53 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Add upstream and fetch
+        run: |
+          git remote add upstream https://github.com/NousResearch/hermes-agent.git || true
+          git fetch upstream main --tags
+      - name: Try fast-forward main to upstream
+        id: ff
+        run: |
+          git checkout main
+          if git merge --ff-only upstream/main; then
+            echo "fast_forwarded=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "fast_forwarded=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Push fast-forward
+        if: steps.ff.outputs.fast_forwarded == 'true'
+        run: git push origin main
+      - name: Open conflict PR when diverged
+        if: steps.ff.outputs.fast_forwarded != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BR="sync/upstream-$(date +%Y%m%d)"
+          git checkout -b "$BR"
+          if git merge upstream/main --no-commit; then
+            git commit -m "chore(sync): merge upstream main $(date +%Y-%m-%d)"
+          else
+            git add -A
+            git commit -m "chore(sync): merge upstream main $(date +%Y-%m-%d) with conflicts marked"
+          fi
+          git push -u origin "$BR"
+          gh pr create --base main --head "$BR" \
+            --title "chore(sync): upstream main $(date +%Y-%m-%d)" \
+            --body "Auto-sync hit conflicts (or non-FF). Resolve and merge to keep following upstream." \
+            || true
