@@ -80,8 +80,13 @@ runs:
       run: |
         $bins = "$env:RUNNER_TEMP\test-bins\ffmpeg"
         New-Item -ItemType Directory -Path $bins -Force | Out-Null
-        winget install -e --id Gyan.FFmpeg --silent --accept-source-agreements --accept-package-agreements --disable-interactivity --location "$env:RUNNER_TEMP\ffmpeg_dir"
-        Copy-Item -Path "$env:RUNNER_TEMP\ffmpeg_dir\*\*" -Destination $bins -Recurse -Force
+        # windows-11-arm images ship Chocolatey but no winget; x64 images have both.
+        if (Get-Command winget -ErrorAction SilentlyContinue) {
+          winget install -e --id Gyan.FFmpeg --silent --accept-source-agreements --accept-package-agreements --disable-interactivity --location "$env:RUNNER_TEMP\ffmpeg_dir"
+          Copy-Item -Path "$env:RUNNER_TEMP\ffmpeg_dir\*\*" -Destination $bins -Recurse -Force
+        } else {
+          choco install ffmpeg -y --no-progress --params "/InstallDir:$bins"
+        }
 
     - name: Add ffmpeg to PATH (windows)
       if: inputs.mode == 'start' && runner.os == 'Windows'
