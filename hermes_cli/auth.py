@@ -188,7 +188,6 @@ _REGISTRY_ROWS: Tuple[Any, ...] = (
         "xai-oauth", "xAI Grok OAuth (SuperGrok / Premium+)", "oauth_external",
         inference_base_url=DEFAULT_XAI_OAUTH_BASE_URL),
     ProviderConfig("qwen-oauth", "Qwen OAuth", "oauth_external", inference_base_url=DEFAULT_QWEN_BASE_URL),
-    ProviderConfig("commandcode-oauth", "Command Code OAuth", "oauth_external", inference_base_url="https://api.commandcode.ai"),
     ("lmstudio", "LM Studio", "http://127.0.0.1:1234/v1", ("LM_API_KEY",), "LM_BASE_URL"),
     ("copilot", "GitHub Copilot", DEFAULT_GITHUB_MODELS_BASE_URL,
      ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"), "COPILOT_API_BASE_URL"),
@@ -761,18 +760,20 @@ def _load_provider_state(auth_store: Dict[str, Any], provider_id: str) -> Option
 
 
 @contextmanager
-def _provider_state_transaction(provider_id: str):
+def _provider_state_transaction(
+        provider_id: str, timeout_seconds: float = AUTH_LOCK_TIMEOUT_SECONDS):
     """Lock the active auth store and any global fallback source, in that order.
 
     Re-reading the source after its lock is acquired prevents stale refreshes and whole-file lost
-    updates without inverting the documented auth -> shared lock order."""
-    with _auth_store_lock():
+    updates without inverting the documented auth -> shared lock order. ``timeout_seconds`` applies
+    to BOTH locks: a transaction that spans a network call must let waiters outlive that call."""
+    with _auth_store_lock(timeout_seconds):
         auth_store = _load_auth_store()
         state, source_path = _load_provider_state_with_source(auth_store, provider_id)
         if source_path is None or _same_path(source_path, _auth_file_path()):
             yield auth_store, state, source_path
             return
-        with _auth_store_lock(target_path=source_path):
+        with _auth_store_lock(timeout_seconds, target_path=source_path):
             yield auth_store, _provider_state_in(_load_auth_store(source_path), provider_id), source_path
 
 
@@ -1785,10 +1786,6 @@ OAUTH_PROVIDER_FLOWS: Dict[str, OAuthProviderFlow] = {
         logout_from_config=True),
     "qwen-oauth": OAuthProviderFlow(
         "qwen-oauth", "resolve_qwen_runtime_credentials", "get_qwen_auth_status"),
-    "commandcode-oauth": OAuthProviderFlow(
-        "commandcode-oauth", "resolve_commandcode_runtime_credentials", "get_commandcode_auth_status"),
-    "command-code": OAuthProviderFlow(
-        "command-code", "resolve_commandcode_runtime_credentials", "get_commandcode_auth_status"),
     "minimax-oauth": OAuthProviderFlow(
         "minimax-oauth", "resolve_minimax_oauth_runtime_credentials", "get_minimax_oauth_auth_status"),
 }
