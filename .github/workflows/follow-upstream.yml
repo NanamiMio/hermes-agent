@@ -80,20 +80,20 @@ jobs:
             [ -z "$REV_SHA" ] && REV_SHA=$(gh api "repos/NanamiMio/hermes-agent/git/refs/tags/${tag}" --jq '.object.sha')
             rm -rf tap-repo && git clone "https://x-access-token:${TAP_TOKEN}@github.com/NanamiMio/homebrew-tap.git" tap-repo
             TAG="$tag" SHA="$SHA" REV_SHA="$REV_SHA" python3 - <<'PYEOF'
-import os, re
-p = "tap-repo/Formula/hermes-agent.rb"
-s = open(p).read()
-tag, sha, rev = os.environ["TAG"], os.environ["SHA"], os.environ["REV_SHA"]
-# Anchor the tarball sha256 to the url line: resource blocks have their own
-# sha256 lines that must NOT be touched.
-s2, n1 = re.subn(
-    r"(NanamiMio/hermes-agent/archive/refs/tags/)v[0-9.]+\.tar\.gz(\"\n\s+sha256 \") *[a-f0-9]{64}",
-    rf"\g<1>{tag}.tar.gz\g<2>{sha}", s)
-s2, n2 = re.subn(r'(HERMES_REVISION:\s*") *[a-f0-9]{40}', rf"\g<1>{rev}", s2)
-assert (n1, n2) == (1, 1), f"expected exactly 1+1 replacements, got {n1}+{n2}"
-open(p, "w").write(s2)
-print("formula bumped:", tag, sha[:12], rev[:12])
-PYEOF
+            import os, re
+            p = "tap-repo/Formula/hermes-agent.rb"
+            s = open(p).read()
+            tag, sha, rev = os.environ["TAG"], os.environ["SHA"], os.environ["REV_SHA"]
+            # Anchor the tarball sha256 to the url line: resource blocks have their own
+            # sha256 lines that must NOT be touched.
+            s2, n1 = re.subn(
+                r"(NanamiMio/hermes-agent/archive/refs/tags/)v[0-9.]+\.tar\.gz(\"\n\s+sha256 \") *[a-f0-9]{64}",
+                rf"\g<1>{tag}.tar.gz\g<2>{sha}", s)
+            s2, n2 = re.subn(r'(HERMES_REVISION:\s*") *[a-f0-9]{40}', rf"\g<1>{rev}", s2)
+            assert (n1, n2) == (1, 1), f"expected exactly 1+1 replacements, got {n1}+{n2}"
+            open(p, "w").write(s2)
+            print("formula bumped:", tag, sha[:12], rev[:12])
+            PYEOF
             (
               cd tap-repo
               git config user.name "NanamiMio"
