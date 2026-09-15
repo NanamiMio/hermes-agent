@@ -66,23 +66,34 @@ jobs:
             git tag -d "$tag" 2>/dev/null || true
             git tag -a "$tag" HEAD -m "Follow upstream release $tag (upstream commit $upstream_sha) + commandcode-oauth"
             git push origin "refs/tags/$tag" --force
-            upstream_name=$(gh api "repos/NousResearch/hermes-agent/releases/tags/$tag" --jq '.name // ""' 2>/dev/null || true)
+            # NOTE: GITHUB_TOKEN in a fork cannot read the upstream repo's
+            # releases API (403), so title is built from the tag only.
             gh release create "$tag" \
-              --title "${upstream_name:-Hermes Agent ($tag)} + commandcode-oauth" \
+              --title "Hermes Agent ($tag) + commandcode-oauth" \
               --notes "Follows upstream release [$tag](https://github.com/NousResearch/hermes-agent/releases/tag/$tag) (upstream commit \`$upstream_sha\`), plus the commandcode-oauth provider (Go-tier CLI credentials). Install via the homebrew tap." \
               || true
-            # --- bump tap formula ---
+            # --- bump tap formula (python: no shell/perl quoting pitfalls) ---
             curl -sL -o hermes.tar.gz "https://github.com/NanamiMio/hermes-agent/archive/refs/tags/${tag}.tar.gz"
             SHA=$(shasum -a 256 hermes.tar.gz | awk '{print $1}')
             REV_SHA=$(gh api "repos/NanamiMio/hermes-agent/git/refs/tags/${tag}" --jq '.object.sha')
-            REV_SHA=$(gh api "repos/NanamiMio/hermes-agent/git/tags/${REV_SHA}" --jq '.object.sha // "'${REV_SHA}'"')
+            REV_SHA=$(gh api "repos/NanamiMio/hermes-agent/git/tags/${REV_SHA}" --jq '.object.sha')
+            [ -z "$REV_SHA" ] && REV_SHA=$(gh api "repos/NanamiMio/hermes-agent/git/refs/tags/${tag}" --jq '.object.sha')
             rm -rf tap-repo && git clone "https://x-access-token:${TAP_TOKEN}@github.com/NanamiMio/homebrew-tap.git" tap-repo
+            TAG="$tag" SHA="$SHA" REV_SHA="$REV_SHA" python3 - <<'PYEOF'
+import os, re
+p = "tap-repo/Formula/hermes-agent.rb"
+s = open(p).read()
+tag, sha, rev = os.environ["TAG"], os.environ["SHA"], os.environ["REV_SHA"]
+s2 = re.sub(r"NanamiMio/hermes-agent/archive/refs/tags/v[0-9.]+\.tar\.gz",
+            f"NanamiMio/hermes-agent/archive/refs/tags/{tag}.tar.gz", s)
+s2 = re.sub(r'(sha256 ") *[a-f0-9]{64}', rf"\g<1>{sha}", s2)
+s2 = re.sub(r'(HERMES_REVISION:\s*") *[a-f0-9]{40}', rf"\g<1>{rev}", s2)
+assert s2 != s, "formula unchanged — patterns did not match"
+open(p, "w").write(s2)
+print("formula bumped:", tag, sha[:12], rev[:12])
+PYEOF
             (
               cd tap-repo
-              git checkout master
-              sed -i "s|NanamiMio/hermes-agent/archive/refs/tags/v[0-9.]*\.tar\.gz|NanamiMio/hermes-agent/archive/refs/tags/${tag}.tar.gz|" Formula/hermes-agent.rb
-              perl -0pi -e "s|(url \"https://github\.com/NanamiMio/hermes-agent[^\"]+\"\n\s+sha256 \") [a-f0-9]+|\${1}${SHA}|" Formula/hermes-agent.rb
-              perl -0pi -e "s|(HERMES_REVISION:\s+\") [a-f0-9]{40}|\${1}${REV_SHA}|" Formula/hermes-agent.rb
               git config user.name "NanamiMio"
               git config user.email "zhangshower@gmail.com"
               git add Formula/hermes-agent.rb
