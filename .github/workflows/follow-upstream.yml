@@ -5,13 +5,13 @@ name: Follow upstream
 #      usually already did this; this step covers the case it hasn't yet)
 #   2. for each new upstream release tag: tag our main HEAD, create a
 #      GitHub release, bump the homebrew tap formula
-# Runs hourly so a new upstream release is followed within ~1h.
+# Runs daily so a new upstream release is followed within ~24h.
 # NOTE: fork repos cannot receive the upstream repo's `release` webhook,
 # so polling is the only trigger. workflow_dispatch allows manual runs.
 
 on:
   schedule:
-    - cron: "23 * * * *"
+    - cron: "23 3 * * *"
   workflow_dispatch:
 
 permissions:
