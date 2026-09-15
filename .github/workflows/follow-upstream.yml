@@ -68,7 +68,9 @@ jobs:
             git push origin "refs/tags/$tag" --force
             # NOTE: GITHUB_TOKEN in a fork cannot read the upstream repo's
             # releases API (403), so title is built from the tag only.
-            gh release create "$tag" \
+            # --repo is required: with multiple remotes gh can resolve the
+            # wrong repo (verified in sandbox).
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" \
               --title "Hermes Agent ($tag) + commandcode-oauth" \
               --notes "Follows upstream release [$tag](https://github.com/NousResearch/hermes-agent/releases/tag/$tag) (upstream commit \`$upstream_sha\`), plus the commandcode-oauth provider (Go-tier CLI credentials). Install via the homebrew tap." \
               || true
