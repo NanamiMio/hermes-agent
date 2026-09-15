@@ -59,8 +59,11 @@ jobs:
               continue
             fi
             echo "=== Following upstream release $tag (upstream commit $upstream_sha) ==="
+            # A same-named upstream tag exists locally (fetched from upstream);
+            # drop it so we can tag OUR head with the same name.
+            git tag -d "$tag" 2>/dev/null || true
             git tag -a "$tag" HEAD -m "Follow upstream release $tag (upstream commit $upstream_sha) + commandcode-oauth"
-            git push origin "refs/tags/$tag"
+            git push origin "refs/tags/$tag" --force
             upstream_name=$(gh api "repos/NousResearch/hermes-agent/releases/tags/$tag" --jq '.name // ""' 2>/dev/null || true)
             gh release create "$tag" \
               --title "${upstream_name:-Hermes Agent ($tag)} + commandcode-oauth" \
