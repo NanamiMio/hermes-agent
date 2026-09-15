@@ -188,6 +188,7 @@ _REGISTRY_ROWS: Tuple[Any, ...] = (
         "xai-oauth", "xAI Grok OAuth (SuperGrok / Premium+)", "oauth_external",
         inference_base_url=DEFAULT_XAI_OAUTH_BASE_URL),
     ProviderConfig("qwen-oauth", "Qwen OAuth", "oauth_external", inference_base_url=DEFAULT_QWEN_BASE_URL),
+    ProviderConfig("commandcode-oauth", "Command Code OAuth", "oauth_external", inference_base_url="https://api.commandcode.ai"),
     ("lmstudio", "LM Studio", "http://127.0.0.1:1234/v1", ("LM_API_KEY",), "LM_BASE_URL"),
     ("copilot", "GitHub Copilot", DEFAULT_GITHUB_MODELS_BASE_URL,
      ("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"), "COPILOT_API_BASE_URL"),
@@ -1786,6 +1787,10 @@ OAUTH_PROVIDER_FLOWS: Dict[str, OAuthProviderFlow] = {
         logout_from_config=True),
     "qwen-oauth": OAuthProviderFlow(
         "qwen-oauth", "resolve_qwen_runtime_credentials", "get_qwen_auth_status"),
+    "commandcode-oauth": OAuthProviderFlow(
+        "commandcode-oauth", "resolve_commandcode_runtime_credentials", "get_commandcode_auth_status"),
+    "command-code": OAuthProviderFlow(
+        "command-code", "resolve_commandcode_runtime_credentials", "get_commandcode_auth_status"),
     "minimax-oauth": OAuthProviderFlow(
         "minimax-oauth", "resolve_minimax_oauth_runtime_credentials", "get_minimax_oauth_auth_status"),
 }
