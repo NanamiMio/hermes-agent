@@ -1,0 +1,88 @@
+name: Follow upstream
+
+# Single pipeline that follows upstream releases end to end:
+#   1. fast-forward our main to upstream main (native GitHub fork auto-sync
+#      usually already did this; this step covers the case it hasn't yet)
+#   2. for each new upstream release tag: tag our main HEAD, create a
+#      GitHub release, bump the homebrew tap formula
+# Runs hourly so a new upstream release is followed within ~1h.
+# NOTE: fork repos cannot receive the upstream repo's `release` webhook,
+# so polling is the only trigger. workflow_dispatch allows manual runs.
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  follow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Sync main with upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git remote add upstream https://github.com/NousResearch/hermes-agent.git || true
+          git fetch upstream main --tags --force
+          git fetch origin main --tags --force
+          git checkout main
+          git reset --hard origin/main
+          if git merge --ff-only upstream/main; then
+            git push origin main
+            echo "main fast-forwarded to upstream"
+          else
+            echo "main diverged from upstream — leaving for native fork auto-sync / manual merge"
+          fi
+      - name: Tag, release and bump tap for new upstream releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+        run: |
+          git checkout main
+          git reset --hard origin/main
+          # Upstream tags look like v2026.9.11
+          for tag in $(git ls-remote --tags upstream | awk '{print $2}' | sed 's|refs/tags/||;s|\^{}||' | grep -E '^v20[0-9]{2}\.' | sort -u); do
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+              continue
+            fi
+            upstream_sha=$(git rev-list -n 1 "refs/tags/$tag" 2>/dev/null || true)
+            [ -z "$upstream_sha" ] && continue
+            if ! git merge-base --is-ancestor "$upstream_sha" HEAD 2>/dev/null; then
+              echo "SKIP $tag: upstream commit not yet merged into our main"
+              continue
+            fi
+            echo "=== Following upstream release $tag (upstream commit $upstream_sha) ==="
+            git tag -a "$tag" HEAD -m "Follow upstream release $tag (upstream commit $upstream_sha) + commandcode-oauth"
+            git push origin "refs/tags/$tag"
+            upstream_name=$(gh api "repos/NousResearch/hermes-agent/releases/tags/$tag" --jq '.name // ""' 2>/dev/null || true)
+            gh release create "$tag" \
+              --title "${upstream_name:-Hermes Agent ($tag)} + commandcode-oauth" \
+              --notes "Follows upstream release [$tag](https://github.com/NousResearch/hermes-agent/releases/tag/$tag) (upstream commit \`$upstream_sha\`), plus the commandcode-oauth provider (Go-tier CLI credentials). Install via the homebrew tap." \
+              || true
+            # --- bump tap formula ---
+            curl -sL -o hermes.tar.gz "https://github.com/NanamiMio/hermes-agent/archive/refs/tags/${tag}.tar.gz"
+            SHA=$(shasum -a 256 hermes.tar.gz | awk '{print $1}')
+            REV_SHA=$(gh api "repos/NanamiMio/hermes-agent/git/refs/tags/${tag}" --jq '.object.sha')
+            REV_SHA=$(gh api "repos/NanamiMio/hermes-agent/git/tags/${REV_SHA}" --jq '.object.sha // "'${REV_SHA}'"')
+            rm -rf tap-repo && git clone "https://x-access-token:${TAP_TOKEN}@github.com/NanamiMio/homebrew-tap.git" tap-repo
+            (
+              cd tap-repo
+              git checkout master
+              sed -i "s|NanamiMio/hermes-agent/archive/refs/tags/v[0-9.]*\.tar\.gz|NanamiMio/hermes-agent/archive/refs/tags/${tag}.tar.gz|" Formula/hermes-agent.rb
+              perl -0pi -e "s|(url \"https://github\.com/NanamiMio/hermes-agent[^\"]+\"\n\s+sha256 \") [a-f0-9]+|\${1}${SHA}|" Formula/hermes-agent.rb
+              perl -0pi -e "s|(HERMES_REVISION:\s+\") [a-f0-9]{40}|\${1}${REV_SHA}|" Formula/hermes-agent.rb
+              git config user.name "NanamiMio"
+              git config user.email "zhangshower@gmail.com"
+              git add Formula/hermes-agent.rb
+              git commit -m "chore: bump hermes-agent to ${tag}" || exit 0
+              git push origin master
+            )
+            rm -rf tap-repo hermes.tar.gz
+          done
