@@ -1,8 +1,8 @@
 name: Follow upstream
 
 # Single pipeline that follows upstream releases end to end:
-#   1. fast-forward our main to upstream main (native GitHub fork auto-sync
-#      usually already did this; this step covers the case it hasn't yet)
+#   1. merge upstream main into our main (a real merge: our main carries local
+#      commits, so neither --ff-only nor a reset to upstream is correct)
 #   2. for each new upstream release tag: tag our main HEAD, create a
 #      GitHub release, bump the homebrew tap formula
 # Runs daily so a new upstream release is followed within ~24h.
@@ -34,11 +34,18 @@ jobs:
           git fetch origin main --tags --force
           git checkout main
           git reset --hard origin/main
-          if git merge --ff-only upstream/main; then
+          git config user.name "NanamiMio"
+          git config user.email "zhangshower@gmail.com"
+          # A real merge. --ff-only never succeeds once main has local commits
+          # (it silently did nothing and left the sync to the fork auto-sync,
+          # which hard-resets), and a reset to upstream deletes our work.
+          if git merge --no-edit upstream/main; then
             git push origin main
-            echo "main fast-forwarded to upstream"
+            echo "main merged with upstream"
           else
-            echo "main diverged from upstream — leaving for native fork auto-sync / manual merge"
+            echo "::error::conflict merging upstream/main into main - resolve manually"
+            git merge --abort
+            exit 1
           fi
       - name: Tag, release and bump tap for new upstream releases
         env:
