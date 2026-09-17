@@ -55,7 +55,7 @@ jobs:
       - name: Tag, release and bump tap for new upstream releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
+          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
         run: |
           git checkout main
           git reset --hard origin/main
@@ -92,7 +92,7 @@ jobs:
             REV_SHA=$(gh api "repos/NanamiMio/hermes-agent/git/refs/tags/${tag}" --jq '.object.sha')
             REV_SHA=$(gh api "repos/NanamiMio/hermes-agent/git/tags/${REV_SHA}" --jq '.object.sha')
             [ -z "$REV_SHA" ] && REV_SHA=$(gh api "repos/NanamiMio/hermes-agent/git/refs/tags/${tag}" --jq '.object.sha')
-            rm -rf tap-repo && git clone "https://x-access-token:${TAP_TOKEN}@github.com/NanamiMio/homebrew-tap.git" tap-repo
+            rm -rf tap-repo && git clone "https://x-access-token:${SYNC_TOKEN}@github.com/NanamiMio/homebrew-tap.git" tap-repo
             TAG="$tag" SHA="$SHA" REV_SHA="$REV_SHA" OWNER_REPO="NanamiMio/hermes-agent" FORMULA_PATH="Formula/hermes-agent.rb" python3 .github/scripts/bump-formula.py
             (
               cd tap-repo
