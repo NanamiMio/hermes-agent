@@ -24,8 +24,9 @@ jobs:
       # SYNC_TOKEN, not GITHUB_TOKEN: upstream edits .github/workflows/* (e.g. the
       # check_os_marker_fakes step in bf1c28b480), and GitHub refuses a push that
       # touches workflow files from a GitHub App token. `workflows` is not in the
-      # GITHUB_TOKEN permissions table, so it cannot be granted via `permissions:`
-      # — only a PAT with the workflow scope (or an App token that has it) works.
+      # GITHUB_TOKEN permissions table, so it cannot be granted via `permissions:`.
+      # A fine-grained PAT carrying Contents: read and write does push workflow
+      # files (verified 2026-09-17, run 35198715227) — no Workflows grant needed.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -55,7 +56,7 @@ jobs:
       - name: Tag, release and bump tap for new upstream releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SYNC_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          TAP_TOKEN: ${{ secrets.TAP_TOKEN }}
         run: |
           git checkout main
           git reset --hard origin/main
@@ -92,7 +93,7 @@ jobs:
             REV_SHA=$(gh api "repos/NanamiMio/hermes-agent/git/refs/tags/${tag}" --jq '.object.sha')
             REV_SHA=$(gh api "repos/NanamiMio/hermes-agent/git/tags/${REV_SHA}" --jq '.object.sha')
             [ -z "$REV_SHA" ] && REV_SHA=$(gh api "repos/NanamiMio/hermes-agent/git/refs/tags/${tag}" --jq '.object.sha')
-            rm -rf tap-repo && git clone "https://x-access-token:${SYNC_TOKEN}@github.com/NanamiMio/homebrew-tap.git" tap-repo
+            rm -rf tap-repo && git clone "https://x-access-token:${TAP_TOKEN}@github.com/NanamiMio/homebrew-tap.git" tap-repo
             TAG="$tag" SHA="$SHA" REV_SHA="$REV_SHA" OWNER_REPO="NanamiMio/hermes-agent" FORMULA_PATH="Formula/hermes-agent.rb" python3 .github/scripts/bump-formula.py
             (
               cd tap-repo
