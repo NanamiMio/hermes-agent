@@ -21,10 +21,15 @@ jobs:
   follow:
     runs-on: ubuntu-latest
     steps:
+      # SYNC_TOKEN, not GITHUB_TOKEN: upstream edits .github/workflows/* (e.g. the
+      # check_os_marker_fakes step in bf1c28b480), and GitHub refuses a push that
+      # touches workflow files from a GitHub App token. `workflows` is not in the
+      # GITHUB_TOKEN permissions table, so it cannot be granted via `permissions:`
+      # — only a PAT with the workflow scope (or an App token that has it) works.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.SYNC_TOKEN }}
       - name: Sync main with upstream
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
