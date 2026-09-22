@@ -193,6 +193,9 @@ def _known_provider_ids(cfg: dict) -> tuple[set, list, object, object, object]:
 _VENDOR_SLUG_PROVIDERS = {
     "openrouter", "auto", "ai-gateway", "kilocode", "opencode-zen", "huggingface", "lmstudio", "nous", "nvidia",
     "fireworks", "deepinfra",
+    # This fork's Command Code providers: their catalog IDs are vendor-prefixed
+    # ("command-code/<model>"), so a slash is the native form, not an aggregator slug.
+    "commandcode-oauth", "command-code",
 }
 
 
