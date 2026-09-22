@@ -319,9 +319,8 @@ def get_managed_update_command() -> Optional[str]:
 
 # "apt" is the Termux APT distribution identifier, not a generic Debian/Ubuntu signal; another
 # APT distribution needs its own method. "home-manager" is listed because the managed marker can
-# return it and a stamp must name every method this function returns. "brew-tap" is this fork's
-# own Homebrew tap install: the formula stamps it, and upstream would reject it as unknown.
-_SUPPORTED_INSTALL_METHODS = frozenset({"apt", "brew-tap", "docker", "nix", "nixos", "home-manager", "git", "unknown"})
+# return it and a stamp must name every method this function returns.
+_SUPPORTED_INSTALL_METHODS = frozenset({"apt", "docker", "nix", "nixos", "home-manager", "git", "unknown"})
 
 
 def _install_method_stamp(path: Path) -> Optional[str]:
@@ -333,7 +332,7 @@ def _install_method_stamp(path: Path) -> Optional[str]:
 
 
 def detect_install_method(project_root: Optional[Path] = None) -> str:
-    """Detect how Hermes was installed: apt/brew-tap/docker/nix/nixos/home-manager/git/unknown.
+    """Detect how Hermes was installed: apt/docker/nix/nixos/home-manager/git/unknown.
     Order: code-scoped ``<install tree>/.install_method`` stamp (authoritative) -> legacy
     ``$HERMES_HOME/.install_method`` -> managed marker -> /nix/store path -> .git dir -> unknown.
     The stamp lives next to the code because HERMES_HOME is shared data: a container and a host
@@ -398,7 +397,6 @@ def is_nix_install_method(method: str) -> bool:
 _UPDATE_COMMAND_BY_METHOD = {
     "docker": "docker pull nousresearch/hermes-agent:latest",
     "apt": "pkg upgrade hermes-agent",  # "apt" == Termux APT by contract; uses Termux's `pkg`.
-    "brew-tap": "brew upgrade hermes-agent",
 }
 
 

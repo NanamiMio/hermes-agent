@@ -521,15 +521,6 @@ def _check_command_installation(should_fix: bool, f: Finding) -> None:
     if sys.platform == "win32":
         return
     _section("Command Installation")
-    # Homebrew (tap) installs get their entry points from the formula's bin/ symlinks, not a
-    # repo-local venv, so the venv/bin probe below would always false-positive on them.
-    try:
-        from hermes_cli.config import detect_install_method
-
-        if detect_install_method() == "brew-tap":
-            return check_ok("Homebrew (tap) install — entry points provided by the formula")
-    except Exception:
-        pass
     venv_bin = next((c for c in (PROJECT_ROOT / n / "bin" / "hermes" for n in ("venv", ".venv")) if c.exists()), None)
     if venv_bin is None:
         check_warn("Venv entry point not found", "(hermes not in venv/bin/ or .venv/bin/ — reinstall with pip install -e '.[all]')")
