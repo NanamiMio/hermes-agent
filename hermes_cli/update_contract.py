@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class UpdateRefusal:
     """Why an in-place update is refused, and what to run instead."""
 
-    code: str              # image-marker | image-marker-invalid | docker | nix | apt
+    code: str              # image-marker | image-marker-invalid | docker | nix | apt | brew-tap
     message: str           # full user-facing text (multi-line ok)
     update_command: str    # the one-line remediation command
 
@@ -68,6 +68,11 @@ def evaluate_update_admission(project_root: Path) -> Optional[UpdateRefusal]:
         method = detect_install_method(project_root)
         if method == "docker":
             return _refusal("docker", method)
+        if method == "brew-tap":
+            return _refusal("brew-tap", method, lambda command: (
+                "✗ This is a Homebrew (tap) install; in-place update is disabled.\n"
+                f"  Update with:\n    {command}"
+            ))
         if is_nix_install_method(method) or method == "apt":
             return _refusal(method if method == "apt" else "nix", method)
     except Exception as exc:
