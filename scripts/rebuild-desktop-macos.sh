@@ -17,11 +17,12 @@
 #
 # Requirements: macOS, node/npm, a clean checkout of this repo.
 #
-# NOTE: this builds whatever revision you point it at. Only run it when that
-# revision's desktop actually works — a known upstream regression crashes the
-# workspace contribution at startup (see the fork's notes), so verify before
-# replacing a working bundle. The previous bundle is kept as
-# `Hermes.app.replaced-<timestamp>`; delete it once the new one is verified.
+# NOTE: this builds whatever revision you point it at. If you ever see a renderer
+# crash loop ("Maximum update depth exceeded" in the workspace contribution) the
+# install had drifted off the lockfile — the assertion below now refuses that
+# build, so a failure there is the guard doing its job, not a broken revision.
+# The previous bundle is kept as `Hermes.app.replaced-<timestamp>`; delete it once
+# the new one is verified.
 
 set -euo pipefail
 
@@ -68,15 +69,21 @@ trap restore EXIT
 info "checking out $REF ($COMMIT)"
 git -C "$REPO_ROOT" checkout --quiet --detach "$COMMIT"
 
-# The repo's committed lockfile covers the root workspace only, so the desktop's
-# devDependencies (electron, electron-builder, …) are not in it. npm also inherits
-# `omit=dev` from some environments, which would silently skip them — hence both
-# installs below. `--no-package-lock` keeps the repo's lockfile untouched.
-info "installing root node dependencies"
-( cd "$REPO_ROOT" && npm ci --no-audit --no-fund )
+# `npm ci` installs exactly what package-lock.json pins and never rewrites it.
+# Do NOT substitute a floating install (`npm install --no-package-lock`, or bun/
+# pnpm without a lockfile): the renderer's dependency range drifts and
+# @assistant-ui/tap moves past the pinned 0.9.8, after which the workspace
+# contribution dies at startup with React's "Maximum update depth exceeded"
+# (NousResearch/hermes-agent#90795). `--include=dev` because some environments
+# export NPM_CONFIG_OMIT=dev, which would silently skip electron/electron-builder.
+info "installing node dependencies from the lockfile (devDependencies included)"
+( cd "$REPO_ROOT" && npm ci --include=dev --no-audit --no-fund )
 
-info "installing desktop node dependencies (incl. devDependencies)"
-( cd "$REPO_ROOT" && npm install -w apps/desktop --include=dev --no-package-lock --no-audit --no-fund )
+LOCKED_TAP=$(node -p "require('$REPO_ROOT/package-lock.json').packages['node_modules/@assistant-ui/tap'].version")
+INSTALLED_TAP=$(node -p "require('$REPO_ROOT/node_modules/@assistant-ui/tap/package.json').version" 2>/dev/null || echo missing)
+[ "$LOCKED_TAP" = "$INSTALLED_TAP" ] \
+  || die "@assistant-ui/tap drifted (lockfile $LOCKED_TAP, installed $INSTALLED_TAP) — this build would crash the workspace pane, see #90795"
+info "@assistant-ui/tap $INSTALLED_TAP matches the lockfile"
 
 info "packaging the desktop app"
 ( cd "$REPO_ROOT/apps/desktop" \
