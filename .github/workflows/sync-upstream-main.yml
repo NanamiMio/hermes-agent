@@ -19,7 +19,11 @@ name: Sync upstream main
 
 on:
   schedule:
-    - cron: "23 3 * * *"
+    # 22:00 UTC = 06:00 in the maintainer's timezone, deliberately ahead of the
+    # 09:00 local self-update job (which can only pull what this run has already
+    # merged). The old 03:23 UTC slot sat *after* that job, so every local update
+    # applied the previous day's merge.
+    - cron: "0 22 * * *"
   workflow_dispatch:
 
 permissions:
