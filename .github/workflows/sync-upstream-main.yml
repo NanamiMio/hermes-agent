@@ -78,19 +78,26 @@ jobs:
           for f in hermes_cli/auth_commandcode.py agent/commandcode_alpha_adapter.py; do
             [ -f "$f" ] || { echo "::error::missing $f"; fail=1; }
           done
-          while read -r file; do
-            grep -q 'commandcode-oauth' "$file" || { echo "::error::commandcode-oauth wiring missing from $file"; fail=1; }
+          # file:marker — the exact string each patched file must still carry.
+          # inventory.py holds the fork's disabled/excluded-provider filtering,
+          # not commandcode wiring, so its marker is that change (asserting the
+          # slug there failed the 2026-09-23 run on a false positive).
+          while IFS=: read -r file marker; do
+            [ -n "$file" ] || continue
+            [ -f "$file" ] || { echo "::error::missing $file"; fail=1; continue; }
+            grep -q "$marker" "$file" || { echo "::error::$file no longer contains '$marker'"; fail=1; }
           done <<'EOF'
-          hermes_cli/auth.py
-          hermes_cli/auth_commands.py
-          hermes_cli/runtime_provider.py
-          hermes_cli/models.py
-          hermes_cli/models_catalog_static.py
-          hermes_cli/model_setup_flows.py
-          hermes_cli/inventory.py
-          agent/auxiliary_client.py
-          agent/chat_completion_helpers.py
-          plugins/model-providers/commandcode/__init__.py
+          hermes_cli/auth.py:commandcode-oauth
+          hermes_cli/auth_commands.py:commandcode-oauth
+          hermes_cli/runtime_provider.py:commandcode-oauth
+          hermes_cli/models.py:commandcode-oauth
+          hermes_cli/models_catalog_static.py:commandcode-oauth
+          hermes_cli/model_setup_flows.py:commandcode-oauth
+          hermes_cli/doctor_config.py:commandcode-oauth
+          hermes_cli/inventory.py:is_provider_enabled
+          agent/auxiliary_client.py:commandcode-oauth
+          agent/chat_completion_helpers.py:commandcode-oauth
+          plugins/model-providers/commandcode/__init__.py:commandcode-oauth
           EOF
           exit "$fail"
 
