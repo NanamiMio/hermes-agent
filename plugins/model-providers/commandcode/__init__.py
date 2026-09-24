@@ -29,14 +29,14 @@ def _commandcode_api_origin(base_url: str | None) -> str:
     return f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else _COMMANDCODE_API_ORIGIN
 
 
-def _commandcode_get_json(url: str, token: str) -> dict | None:
+def _commandcode_get_json(url: str, token: str, *, timeout: float) -> dict | None:
     """GET one Command Code JSON route; fail-open → None (``/usage`` must never raise)."""
     try:
         req = urllib.request.Request(url)
         req.add_header("Authorization", f"Bearer {token}")
         req.add_header("Accept", "application/json")
         req.add_header("User-Agent", "cli")
-        with open_credentialed_url(req, timeout=10.0) as resp:
+        with open_credentialed_url(req, timeout=timeout) as resp:
             data = json.loads(resp.read().decode())
         return data if isinstance(data, dict) else None
     except Exception as exc:
@@ -197,30 +197,36 @@ class CommandCodeOAuthProfile(CommandCodeProfile):
         the CLI/OAuth token — the Provider API under ``/provider/v1`` does not — so this is the
         account view for Go-tier credentials. Fail-open → None.
         """
+        origin = _commandcode_api_origin(base_url)
         token = (api_key or "").strip()
         if not token:
             try:
-                from hermes_cli.auth_commandcode import resolve_commandcode_runtime_credentials
+                from hermes_cli.runtime_provider import resolve_runtime_provider
 
-                token = str(resolve_commandcode_runtime_credentials().get("api_key") or "").strip()
+                runtime = resolve_runtime_provider(
+                    requested=self.name, explicit_base_url=base_url, explicit_api_key=api_key
+                )
+                token = str(runtime.get("api_key") or "").strip()
+                origin = _commandcode_api_origin(str(runtime.get("base_url") or base_url))
             except Exception as exc:
                 logger.debug("fetch_account_usage(commandcode-oauth): credentials: %s", exc)
                 return None
         if not token:
             return None
-        origin = _commandcode_api_origin(base_url)
-        credits_payload = _commandcode_get_json(f"{origin}/alpha/billing/credits", token)
+        # Two calls share the hook's 10 s deadline (agent.account_usage.PLUGIN_USAGE_HOOK_DEADLINE_S),
+        # so each gets half of it rather than the whole budget.
+        credits_payload = _commandcode_get_json(f"{origin}/alpha/billing/credits", token, timeout=4.0)
         if credits_payload is None:
             return None
         windows, details = _commandcode_usage_view(
-            credits_payload, _commandcode_get_json(f"{origin}/alpha/usage/summary", token)
+            credits_payload, _commandcode_get_json(f"{origin}/alpha/usage/summary", token, timeout=4.0)
         )
         from datetime import datetime, timezone
 
         from agent.account_usage import AccountUsageSnapshot
 
         return AccountUsageSnapshot(
-            provider="commandcode-oauth",
+            provider=self.name,
             source="billing-api",
             fetched_at=datetime.now(timezone.utc),
             title="Command Code limits",
