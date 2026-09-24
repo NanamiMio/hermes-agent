@@ -24,6 +24,32 @@ logger = logging.getLogger("agent.commandcode_alpha")
 COMMANDCODE_GENERATE_URL = "https://api.commandcode.ai/alpha/generate"
 
 
+def _normalize_media_part(part: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Normalize one non-text content part into /alpha/generate's wire shape.
+
+    Images ride as ``{"type": "image", "image": "<url string>"}`` — OpenAI's nested
+    ``{"image_url": {"url": ...}}`` is rejected with 400 ("expected string, received array"),
+    while Anthropic's ``{"source": {...}}`` block is accepted verbatim. Both Hermes callers
+    (``_media_messages``) and Anthropic-shaped clients send one of those, so accept all three
+    and emit the string form. Returns None for a part carrying no usable payload.
+    """
+    kind = "video" if "video" in str(part.get("type", "")) else "image"
+    url = part.get(kind)
+    if isinstance(url, dict):
+        url = url.get("url")
+    if not isinstance(url, str) or not url:
+        nested = part.get(f"{kind}_url")
+        if isinstance(nested, dict):
+            url = nested.get("url")
+        elif isinstance(nested, str):
+            url = nested
+    if isinstance(url, str) and url:
+        return {"type": kind, kind: url}
+    if isinstance(part.get("source"), dict):
+        return part  # Anthropic-shaped source block: accepted as-is
+    return None
+
+
 def _format_messages_for_commandcode(messages: List[Dict[str, Any]]) -> tuple[str, List[Dict[str, Any]]]:
     """Extract system prompt and convert messages to Command Code /alpha/generate wire format."""
     system_parts: List[str] = []
@@ -45,13 +71,30 @@ def _format_messages_for_commandcode(messages: List[Dict[str, Any]]) -> tuple[st
                         system_parts.append(part.get("text", ""))
         elif role == "user":
             text = ""
+            parts: List[Dict[str, Any]] = []
             if isinstance(content, str):
                 text = content
             elif isinstance(content, list):
-                text = " ".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")
+                texts: List[str] = []
+                for p in content:
+                    if not isinstance(p, dict):
+                        continue
+                    if p.get("type") == "text":
+                        texts.append(p.get("text", ""))
+                        continue
+                    # Images/videos: without this the pixel payload is dropped and the model
+                    # answers "I don't see an image" — a silent wrong answer, not an error.
+                    media = _normalize_media_part(p)
+                    if media is not None:
+                        parts.append(media)
+                text = " ".join(t for t in texts if t)
+            if parts:
+                parts.insert(0, {"type": "text", "text": text})
+            else:
+                parts = [{"type": "text", "text": text}]
             wire_msgs.append({
                 "role": "user",
-                "content": [{"type": "text", "text": text}],
+                "content": parts,
             })
         elif role == "assistant":
             parts: List[Dict[str, Any]] = []
@@ -273,6 +316,28 @@ def stream_commandcode_alpha(agent: Any, api_kwargs: Dict[str, Any], on_first_de
                     usage_info["prompt_tokens"] = in_tok
                     usage_info["completion_tokens"] = out_tok
                     usage_info["total_tokens"] = in_tok + out_tok
+                    # The relay reports the cached share of the prompt separately
+                    # (``inputTokenDetails.cacheReadTokens``) and the usage page
+                    # bills it as ``cacheCost``. Without this the caller only sees a
+                    # raw input count and reports zero cache hits for a provider
+                    # that is in fact serving most of the prefix from cache.
+                    token_details = raw_usage.get("inputTokenDetails") or {}
+                    cache_read = (
+                        token_details.get("cacheReadTokens")
+                        or raw_usage.get("cacheReadTokens")
+                        or raw_usage.get("cachedInputTokens")
+                        or 0
+                    )
+                    cache_write = (
+                        token_details.get("cacheWriteTokens")
+                        or raw_usage.get("cacheWriteTokens")
+                        or 0
+                    )
+                    if cache_read or cache_write:
+                        usage_info["prompt_tokens_details"] = SimpleNamespace(
+                            cached_tokens=cache_read,
+                            cache_write_tokens=cache_write,
+                        )
                     if not tool_calls and event.get("finishReason"):
                         finish_reason = event.get("finishReason")
                 elif ev_type == "error":
@@ -307,6 +372,8 @@ def stream_commandcode_alpha(agent: Any, api_kwargs: Dict[str, Any], on_first_de
         completion_tokens=usage_info["completion_tokens"],
         total_tokens=usage_info["total_tokens"],
     )
+    if "prompt_tokens_details" in usage_info:
+        usage_obj.prompt_tokens_details = usage_info["prompt_tokens_details"]
 
     return SimpleNamespace(
         id=f"cmdcode-{uuid.uuid4().hex[:12]}",
