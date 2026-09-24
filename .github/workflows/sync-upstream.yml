@@ -1,28 +1,23 @@
-name: Sync upstream main
+name: Sync upstream release
 
-# Keeps our main a superset of upstream main.
+# Follows upstream *releases*, not upstream main.
 #
-# Why main and not releases: an install whose checkout tracks this fork updates
-# with `git pull` (the CLI's `hermes update`, and the desktop's in-app update
-# which shells out to it). That pull is only a clean fast-forward while our main
-# already contains upstream, so upstream's history is merged here — in CI, where
-# a conflict is visible and fixable — rather than on a user's machine mid-update.
+# Upstream lands ~1,800 PRs a week; a machine tracking main pulls that firehose
+# continuously, with no coherent changelog to show for it and a much larger
+# merge surface against the fork's patch set. A release tag is the batch worth
+# carrying, so this merges the newest upstream release that our main does not
+# already contain.
 #
-# This replaces the old release-gated pipeline (merge a release tag, cut a tag,
-# create a release, bump the Homebrew tap). The official checkout install has no
-# formula to bump: the CLI's `hermes update` and the installer's desktop rebuild
-# are the update path now.
+# Why CI at all, when the local daily self-update can merge too: a conflict here
+# is visible in the Actions tab instead of on a working machine mid-update. The
+# local job remains the fallback that also resolves conflicts through the agent.
 #
 # NOTE: a fork repo cannot receive upstream's webhook, so polling is the only
-# trigger; workflow_dispatch allows manual runs. Runs daily, no-op when upstream
-# has not moved.
+# trigger; workflow_dispatch allows manual runs. 22:00 UTC = 06:00 local, ahead
+# of the 09:00 local self-update job that consumes this.
 
 on:
   schedule:
-    # 22:00 UTC = 06:00 in the maintainer's timezone, deliberately ahead of the
-    # 09:00 local self-update job (which can only pull what this run has already
-    # merged). The old 03:23 UTC slot sat *after* that job, so every local update
-    # applied the previous day's merge.
     - cron: "0 22 * * *"
   workflow_dispatch:
 
@@ -35,42 +30,48 @@ jobs:
     steps:
       # SYNC_TOKEN, not GITHUB_TOKEN: upstream edits .github/workflows/*, and
       # GitHub refuses a push that touches workflow files from a GitHub App
-      # token (`workflows` is not in the GITHUB_TOKEN permissions table, so it
-      # cannot be granted via `permissions:`). A fine-grained PAT with Contents:
-      # read and write pushes workflow files without a Workflows grant.
+      # token (`workflows` is not in the GITHUB_TOKEN permissions table).
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           token: ${{ secrets.SYNC_TOKEN }}
 
-      - name: Merge upstream main
+      - name: Merge the newest upstream release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git remote add upstream https://github.com/NousResearch/hermes-agent.git || true
-          git fetch upstream main --force
           git checkout main
           git reset --hard origin/main
           git config user.name "NanamiMio"
           git config user.email "zhangshower@gmail.com"
-          behind=$(git rev-list --count "HEAD..upstream/main")
-          if [ "$behind" = "0" ]; then
-            echo "Already up to date with upstream main; nothing to merge."
+
+          # The release API, not `git tag | sort -V`: the fork carries its own
+          # tags with the same shape (v2026.9.21.1, .2), which would sort newest
+          # and are not upstream releases at all.
+          latest=$(gh api repos/NousResearch/hermes-agent/releases/latest --jq .tag_name)
+          [ -n "$latest" ] || { echo "::error::could not read the latest upstream release"; exit 1; }
+          git fetch upstream "refs/tags/${latest}:refs/tags/${latest}" --force
+          sha=$(git rev-list -n 1 "refs/tags/${latest}")
+
+          if git merge-base --is-ancestor "$sha" HEAD; then
+            echo "main already contains upstream release ${latest}; nothing to merge."
             exit 0
           fi
-          echo "upstream/main is ${behind} commit(s) ahead — merging."
-          # A real merge, never --ff-only or a reset: main carries the fork's
-          # commandcode-oauth patch set and must keep it.
-          if git merge --no-edit upstream/main; then
+          echo "merging upstream release ${latest} (${sha})"
+          if git merge --no-edit "$sha"; then
             git push origin main
           else
-            echo "::error::conflict merging upstream/main into main — resolve manually, then re-run"
+            echo "::error::conflict merging upstream release ${latest} — resolve manually, then re-run"
             git merge --abort
             exit 1
           fi
 
       # The fork's whole reason to exist is the commandcode-oauth patch set. A
       # merge that silently drops part of it (an upstream refactor moving a call
-      # site, a rename) would otherwise reach a user's install as a broken
-      # provider, so fail loudly here instead.
+      # site, a rename) would otherwise reach an install as a broken provider, so
+      # fail loudly here instead. Markers are per file — inventory.py carries the
+      # fork's disabled/excluded-provider filtering, not commandcode wiring.
       - name: Check the commandcode patch set survived
         run: |
           set -u
@@ -78,10 +79,6 @@ jobs:
           for f in hermes_cli/auth_commandcode.py agent/commandcode_alpha_adapter.py; do
             [ -f "$f" ] || { echo "::error::missing $f"; fail=1; }
           done
-          # file:marker — the exact string each patched file must still carry.
-          # inventory.py holds the fork's disabled/excluded-provider filtering,
-          # not commandcode wiring, so its marker is that change (asserting the
-          # slug there failed the 2026-09-23 run on a false positive).
           while IFS=: read -r file marker; do
             [ -n "$file" ] || continue
             [ -f "$file" ] || { echo "::error::missing $file"; fail=1; continue; }
