@@ -4640,6 +4640,12 @@ def _to_async_client(sync_client, model: str, is_vision: bool = False):
         return AsyncAnthropicAuxiliaryClient(sync_client), model
     if isinstance(sync_client, BedrockAuxiliaryClient):
         return AsyncBedrockAuxiliaryClient(sync_client), model
+    if isinstance(sync_client, CommandCodeOAuthAuxiliaryClient):
+        # Command Code /alpha/generate is a sync urllib NDJSON stream (Go-tier accounts have no
+        # Provider-API access). Without this branch the generic rebuild below constructs a real
+        # AsyncOpenAI against .base_url (/provider/v1), so every ASYNC aux task — vision_analyze
+        # is the only one — 403s and even marks the shared OAuth credential pool entry exhausted.
+        return _AsyncAuxiliaryClientBase(sync_client), model
     with contextlib.suppress(ImportError):
         from agent.gemini_native_adapter import GeminiNativeClient, AsyncGeminiNativeClient
         if isinstance(sync_client, GeminiNativeClient):
