@@ -4,6 +4,7 @@
 
 import json
 import logging
+import urllib.parse
 import urllib.request
 
 from hermes_cli.urllib_security import open_credentialed_url
@@ -14,6 +15,80 @@ logger = logging.getLogger(__name__)
 
 _COMMANDCODE_BASE = "https://api.commandcode.ai/provider/v1"
 _COMMANDCODE_MODELS_URL = f"{_COMMANDCODE_BASE}/models"
+
+# The account portal (``/alpha/*``) sits at the API origin, not under ``/provider/v1``.
+_COMMANDCODE_API_ORIGIN = "https://api.commandcode.ai"
+
+
+def _commandcode_api_origin(base_url: str | None) -> str:
+    """Caller's base URL → the origin ``/alpha/*`` routes live on."""
+    raw = (base_url or "").strip().rstrip("/")
+    if not raw or "/provider/v1" in raw:
+        return _COMMANDCODE_API_ORIGIN
+    parsed = urllib.parse.urlsplit(raw)
+    return f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else _COMMANDCODE_API_ORIGIN
+
+
+def _commandcode_get_json(url: str, token: str) -> dict | None:
+    """GET one Command Code JSON route; fail-open → None (``/usage`` must never raise)."""
+    try:
+        req = urllib.request.Request(url)
+        req.add_header("Authorization", f"Bearer {token}")
+        req.add_header("Accept", "application/json")
+        req.add_header("User-Agent", "cli")
+        with open_credentialed_url(req, timeout=10.0) as resp:
+            data = json.loads(resp.read().decode())
+        return data if isinstance(data, dict) else None
+    except Exception as exc:
+        logger.debug("commandcode usage %s: %s", url, exc)
+        return None
+
+
+def _commandcode_window(block: dict, label: str):
+    """One ``windowLimits`` entry (``used``/``cap``/``resetAt`` in USD + epoch ms)."""
+    from agent.account_usage import AccountUsageWindow
+
+    used, cap = block.get("used"), block.get("cap")
+    if not isinstance(used, (int, float)) or not isinstance(cap, (int, float)) or cap <= 0:
+        return None
+    reset_at = block.get("resetAt")
+    reset_dt = None
+    if isinstance(reset_at, (int, float)) and reset_at > 0:
+        from datetime import datetime, timezone
+
+        reset_dt = datetime.fromtimestamp(float(reset_at) / 1000.0, tz=timezone.utc)
+    return AccountUsageWindow(
+        label=label,
+        used_percent=max(0.0, min(100.0, float(used) / float(cap) * 100.0)),
+        reset_at=reset_dt,
+        detail=f"${float(used):.2f} of ${float(cap):.2f} used",
+    )
+
+
+def _commandcode_usage_view(credits_payload: dict, summary: dict | None) -> tuple[list, list[str]]:
+    """``/alpha/billing/credits`` (+ ``/alpha/usage/summary``) → windows and detail lines."""
+    limits = credits_payload.get("windowLimits") or {}
+    windows = [
+        window
+        for window in (
+            _commandcode_window(limits.get("fiveHour") or {}, "5-hour"),
+            _commandcode_window(limits.get("weekly") or {}, "Weekly"),
+        )
+        if window is not None
+    ]
+    credits = credits_payload.get("credits") or {}
+    details: list[str] = []
+    monthly = credits.get("monthlyCredits")
+    if isinstance(monthly, (int, float)):
+        details.append(f"Monthly credits left: ${float(monthly):.2f}")
+    purchased = credits.get("purchasedCredits")
+    if isinstance(purchased, (int, float)) and purchased > 0:
+        details.append(f"Purchased credits: ${float(purchased):.2f}")
+    if isinstance(summary, dict) and isinstance(summary.get("totalCost"), (int, float)):
+        count = summary.get("totalCount")
+        suffix = f" over {int(count)} calls" if isinstance(count, (int, float)) else ""
+        details.append(f"This billing period: ${float(summary['totalCost']):.2f}{suffix}")
+    return windows, details
 
 
 class CommandCodeProfile(ProviderProfile):
@@ -114,6 +189,45 @@ class CommandCodeOAuthProfile(CommandCodeProfile):
                 models.remove(f)
             models.insert(0, f)
         return models
+
+    def fetch_account_usage(self, *, base_url: str | None = None, api_key: str | None = None):
+        """Credits and 5-hour/weekly windows from the Command Code portal.
+
+        ``/alpha/billing/credits`` is what the official CLI's ``/usage`` reads, and it accepts
+        the CLI/OAuth token — the Provider API under ``/provider/v1`` does not — so this is the
+        account view for Go-tier credentials. Fail-open → None.
+        """
+        token = (api_key or "").strip()
+        if not token:
+            try:
+                from hermes_cli.auth_commandcode import resolve_commandcode_runtime_credentials
+
+                token = str(resolve_commandcode_runtime_credentials().get("api_key") or "").strip()
+            except Exception as exc:
+                logger.debug("fetch_account_usage(commandcode-oauth): credentials: %s", exc)
+                return None
+        if not token:
+            return None
+        origin = _commandcode_api_origin(base_url)
+        credits_payload = _commandcode_get_json(f"{origin}/alpha/billing/credits", token)
+        if credits_payload is None:
+            return None
+        windows, details = _commandcode_usage_view(
+            credits_payload, _commandcode_get_json(f"{origin}/alpha/usage/summary", token)
+        )
+        from datetime import datetime, timezone
+
+        from agent.account_usage import AccountUsageSnapshot
+
+        return AccountUsageSnapshot(
+            provider="commandcode-oauth",
+            source="billing-api",
+            fetched_at=datetime.now(timezone.utc),
+            title="Command Code limits",
+            windows=tuple(windows),
+            details=tuple(details),
+            raw=credits_payload,
+        )
 
 
 commandcode_oauth = CommandCodeOAuthProfile(
