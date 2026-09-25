@@ -63,7 +63,7 @@ class TestCustomProviderFetchModels(unittest.TestCase):
         self.assertEqual(profile.fetch_calls[0]["base_url"], None)
 
     def test_custom_fetch_models_reads_pool_access_token(self):
-        """Credentials stored in credential pool as access_token are passed to fetch_models."""
+        """Credentials stored in credential pool as access_token are passed to fetch_models via peek only."""
         profile = _MockCustomOAuthProfile(
             name="test-pool-cred-provider",
             auth_type="oauth_external",
@@ -75,7 +75,6 @@ class TestCustomProviderFetchModels(unittest.TestCase):
         mock_entry = SimpleNamespace(access_token="oauth-bearer-token-123", runtime_api_key="", api_key="")
         mock_pool = MagicMock()
         mock_pool.has_credentials.return_value = True
-        mock_pool.select.return_value = mock_entry
         mock_pool.peek.return_value = mock_entry
 
         with patch("agent.credential_pool.load_pool", return_value=mock_pool):
@@ -84,6 +83,56 @@ class TestCustomProviderFetchModels(unittest.TestCase):
         self.assertEqual(result, ["fallback-1", "custom-model-1", "custom-model-2"])
         self.assertEqual(profile.fetch_calls[0]["api_key"], "oauth-bearer-token-123")
         self.assertEqual(profile.fetch_calls[0]["base_url"], "https://api.example.com")
+        mock_pool.peek.assert_called_once()
+        mock_pool.select.assert_not_called()
+
+    def test_multi_credential_pool_rotation_untouched_by_catalog_probe(self):
+        """Probing models does not advance rotation, change current entry, or increment request_count."""
+        profile = _MockCustomOAuthProfile(
+            name="test-multi-cred-provider",
+            auth_type="oauth_external",
+            fallback_models=("fallback-1",),
+        )
+        register_provider(profile)
+
+        from agent.credential_pool import CredentialPool, PooledCredential, AUTH_TYPE_OAUTH
+
+        cred1 = PooledCredential(
+            provider="test-multi-cred-provider",
+            id="cred-1",
+            label="Account 1",
+            auth_type=AUTH_TYPE_OAUTH,
+            priority=0,
+            source="manual",
+            access_token="token-1",
+            request_count=0,
+        )
+        cred2 = PooledCredential(
+            provider="test-multi-cred-provider",
+            id="cred-2",
+            label="Account 2",
+            auth_type=AUTH_TYPE_OAUTH,
+            priority=0,
+            source="manual",
+            access_token="token-2",
+            request_count=0,
+        )
+
+        with patch("agent.credential_pool.get_pool_strategy", return_value="round_robin"):
+            pool = CredentialPool(provider="test-multi-cred-provider", entries=[cred1, cred2])
+
+        initial_peek_id = pool.peek().id
+        self.assertEqual(initial_peek_id, "cred-1")
+
+        with patch("agent.credential_pool.load_pool", return_value=pool):
+            result = _profile_live_catalog("test-multi-cred-provider")
+
+        self.assertIn("custom-model-1", result)
+        # Verify request counts are completely untouched
+        self.assertEqual(cred1.request_count, 0)
+        self.assertEqual(cred2.request_count, 0)
+        # Verify rotation order is completely untouched (peek is still cred-1)
+        self.assertEqual(pool.peek().id, "cred-1")
 
     def test_custom_fetch_models_failure_falls_back(self):
         """When custom fetch_models raises, it degrades gracefully to fallback_models."""
@@ -97,7 +146,7 @@ class TestCustomProviderFetchModels(unittest.TestCase):
         mock_entry = SimpleNamespace(access_token="reject", runtime_api_key="", api_key="")
         mock_pool = MagicMock()
         mock_pool.has_credentials.return_value = True
-        mock_pool.select.return_value = mock_entry
+        mock_pool.peek.return_value = mock_entry
 
         with patch("agent.credential_pool.load_pool", return_value=mock_pool):
             result = _profile_live_catalog("test-failing-provider")

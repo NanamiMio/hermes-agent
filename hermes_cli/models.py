@@ -1390,7 +1390,7 @@ def _resolve_profile_probe_credentials(normalized: str, profile) -> tuple[str, s
 
         pool = load_pool(normalized)
         if pool and pool.has_credentials():
-            entry = pool.select() or pool.peek()
+            entry = pool.peek()
             if entry:
                 api_key = (
                     getattr(entry, "runtime_api_key", "")
