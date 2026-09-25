@@ -1564,6 +1564,16 @@ _OPENCODE_FREE_EXCLUDED_MODELS = frozenset(
 )
 
 
+def _has_custom_fetch_models(profile) -> bool:
+    """True when *profile* overrides or explicitly declares a custom catalog probe."""
+    from providers.base import ProviderProfile
+
+    flag = getattr(profile, "has_custom_fetch", None)
+    if flag is not None:
+        return bool(flag)
+    return type(profile).fetch_models is not ProviderProfile.fetch_models
+
+
 def _profile_live_catalog(normalized: str) -> Optional[list[str]]:
     """Generic live fetch for registered provider profiles.
 
@@ -1574,7 +1584,6 @@ def _profile_live_catalog(normalized: str) -> Optional[list[str]]:
     profile's ``fallback_models`` as the curated list (Fireworks lists an image model first).
     """
     from providers import get_provider_profile
-    from providers.base import ProviderProfile
 
     profile = get_provider_profile(normalized)
     if not profile:
@@ -1591,8 +1600,8 @@ def _profile_live_catalog(normalized: str) -> Optional[list[str]]:
         # `hermes model` offer one list: live ids plus any pinned id the probe omitted.
         return merge_profile_catalog(normalized, profile, list(live) if live else None)
 
-    # Check whether the profile implements a custom fetch_models override
-    has_custom_fetch = type(profile).fetch_models is not ProviderProfile.fetch_models
+    # Check whether the profile implements or explicitly declares a custom fetch_models probe
+    has_custom_fetch = _has_custom_fetch_models(profile)
 
     # Profiles without a custom fetch_models must be api_key providers with a declared base_url;
     # non-api-key profiles without an override fall back to their fallback_models.
@@ -1606,10 +1615,8 @@ def _profile_live_catalog(normalized: str) -> Optional[list[str]]:
 def probe_profile_catalog(normalized: str, profile, api_key: Optional[str], base_url: Optional[str]) -> Optional[list[str]]:
     """``profile.fetch_models`` gated on a key (no key → no doomed probe for default impls) and merged with the curated
     list; a raising catalog override degrades like a None return — fallback_models, not an empty picker."""
-    from providers.base import ProviderProfile
-
     live = None
-    has_custom_fetch = type(profile).fetch_models is not ProviderProfile.fetch_models
+    has_custom_fetch = _has_custom_fetch_models(profile)
     # Call fetch_models if we have a key, OR if the profile implements its own fetch_models
     # (which may manage its own token discovery or hit an unauthenticated/public catalog).
     if api_key or has_custom_fetch:
