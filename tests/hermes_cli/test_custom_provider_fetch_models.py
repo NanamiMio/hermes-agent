@@ -165,6 +165,21 @@ class TestCustomProviderFetchModels(unittest.TestCase):
         result = _profile_live_catalog("test-default-oauth-provider")
         self.assertEqual(list(result), ["static-1", "static-2"])
 
+    def test_explicit_has_custom_fetch_flag_controls_probe(self):
+        """An explicit has_custom_fetch=False overrides subclass inheritance, and True enables probe."""
+        # Subclass of Custom that opts out
+        class _OptOutSubclass(_MockCustomOAuthProfile):
+            has_custom_fetch = False
+
+        opt_out = _OptOutSubclass(
+            name="test-opt-out-provider",
+            auth_type="oauth_external",
+            fallback_models=("fallback-opt-out",),
+        )
+        register_provider(opt_out)
+        self.assertEqual(list(_profile_live_catalog("test-opt-out-provider")), ["fallback-opt-out"])
+        self.assertEqual(len(opt_out.fetch_calls), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
