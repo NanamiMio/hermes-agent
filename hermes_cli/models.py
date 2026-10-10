@@ -1620,32 +1620,6 @@ def _azure_foundry_catalog(normalized: str, force_refresh: bool) -> Optional[lis
         return None
 
 
-def _commandcode_oauth_catalog(normalized: str, force_refresh: bool) -> Optional[list[str]]:
-    """Command Code OAuth catalog: user-configured models from config.yaml if set,
-    otherwise live discovery from the provider."""
-    try:
-        from hermes_cli.config import load_config
-        cfg = load_config()
-        user_provs = cfg.get("providers") or {}
-        entry = user_provs.get("commandcode-oauth") or user_provs.get("command-code") or {}
-        configured = entry.get("models")
-        if isinstance(configured, list) and configured:
-            return list(configured)
-    except Exception:
-        pass
-
-    from providers import get_provider_profile
-    profile = get_provider_profile("commandcode-oauth")
-    if profile:
-        try:
-            live = profile.fetch_models()
-            if live:
-                return live
-        except Exception:
-            pass
-    return list(_PROVIDER_MODELS.get("commandcode-oauth", []))
-
-
 # Per-provider catalog sources tried before the generic profile fetch. A fetcher returning None
 # falls through to the profile/curated path; a list is returned as-is (even empty).
 _PROVIDER_CATALOG_FETCHERS: dict[str, Any] = {
@@ -1666,8 +1640,6 @@ _PROVIDER_CATALOG_FETCHERS: dict[str, Any] = {
     "openai-api": _openai_catalog,
     "custom": _custom_catalog,
     "bedrock": _bedrock_catalog,
-    "commandcode-oauth": lambda normalized, force_refresh: _commandcode_oauth_catalog(normalized, force_refresh),
-    "command-code": lambda normalized, force_refresh: _commandcode_oauth_catalog(normalized, force_refresh),
     "azure-foundry": _azure_foundry_catalog}
 
 
@@ -1859,18 +1831,6 @@ def provider_model_ids(provider: Optional[str], *, force_refresh: bool = False) 
         return _ollama_local_catalog(force_refresh)
 
     normalized = normalize_provider(provider)
-    # Fork: an explicit ``providers.<slug>.models`` list in config.yaml is the account's declared
-    # catalog — honor it before any live probe so pickers and setup never disagree with the config.
-    try:
-        from hermes_cli.config import load_config
-        cfg = load_config()
-        user_provs = cfg.get("providers") or {}
-        entry = user_provs.get(normalized) or user_provs.get(requested) or {}
-        configured = entry.get("models")
-        if isinstance(configured, list) and configured:
-            return list(configured)
-    except Exception:
-        pass
     # A configured `model.base_url` relay is TERMINAL for live catalog egress: the picker must
     # list what the configured endpoint serves and must never touch the vendor host (#121387).
     # A failed or empty probe degrades to the local curated list — falling through to the

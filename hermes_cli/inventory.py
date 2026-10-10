@@ -703,19 +703,13 @@ def _append_unconfigured_rows(
     # excluded provider as a skeleton row (#68816). A slug is hidden when it or any alias is excluded, so an
     # alias exclusion (``google`` → ``gemini``) can't leak the canonical row back.
     excluded = {str(p).strip().lower() for p in (ctx.excluded_providers or []) if p}
-    # Fork: a user provider switched off in config.yaml stays hidden too, even as a skeleton.
-    from hermes_cli.config import is_provider_enabled
-    disabled = {
-        str(name).strip().lower() for name, pcfg in (ctx.user_providers or {}).items()
-        if isinstance(pcfg, dict) and not is_provider_enabled(pcfg)
-    }
     names_for: dict[str, set[str]] = {}
     for alias, canon in _PROVIDER_ALIASES.items():
         names_for.setdefault(canon.lower(), {canon.lower()}).add(alias.lower())
     extras: list[dict] = []
     for entry in listed_canonical_providers():
         slug = entry.slug.lower()
-        if slug in seen or slug in disabled:
+        if slug in seen:
             continue
         if names_for.get(slug, {slug}) & excluded:
             continue

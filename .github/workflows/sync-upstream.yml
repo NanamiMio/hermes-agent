@@ -3,18 +3,16 @@ name: Sync upstream release
 # Follows upstream *releases*, not upstream main.
 #
 # Upstream lands ~1,800 PRs a week; a machine tracking main pulls that firehose
-# continuously, with no coherent changelog to show for it and a much larger
-# merge surface against the fork's patch set. A release tag is the batch worth
-# carrying, so this merges the newest upstream release that our main does not
-# already contain.
+# continuously, with no coherent changelog to show for it. A release tag is the
+# batch worth carrying, so this merges the newest upstream release that our main
+# does not already contain.
 #
-# Why CI at all, when the local daily self-update can merge too: a conflict here
-# is visible in the Actions tab instead of on a working machine mid-update. The
-# local job remains the fallback that also resolves conflicts through the agent.
+# main carries no in-tree patches: commandcode-oauth ships as an external
+# model-provider plugin (NanamiMio/hermes-commandcode-oauth), so main is upstream
+# plus fork-only CI/infra files and the merge has no patch set to protect.
 #
 # NOTE: a fork repo cannot receive upstream's webhook, so polling is the only
-# trigger; workflow_dispatch allows manual runs. 22:00 UTC = 06:00 local, ahead
-# of the 09:00 local self-update job that consumes this.
+# trigger; workflow_dispatch allows manual runs. 22:00 UTC = 06:00 local.
 
 on:
   schedule:
@@ -66,46 +64,3 @@ jobs:
             git merge --abort
             exit 1
           fi
-
-      # The fork's whole reason to exist is the commandcode-oauth patch set. A
-      # merge that silently drops part of it (an upstream refactor moving a call
-      # site, a rename) would otherwise reach an install as a broken provider, so
-      # fail loudly here instead. Markers are per file — inventory.py carries the
-      # fork's disabled/excluded-provider filtering, not commandcode wiring.
-      - name: Check the commandcode patch set survived
-        run: |
-          set -u
-          fail=0
-          for f in hermes_cli/auth_commandcode.py agent/commandcode_alpha_adapter.py; do
-            [ -f "$f" ] || { echo "::error::missing $f"; fail=1; }
-          done
-          while IFS=: read -r file marker; do
-            [ -n "$file" ] || continue
-            [ -f "$file" ] || { echo "::error::missing $file"; fail=1; continue; }
-            grep -q "$marker" "$file" || { echo "::error::$file no longer contains '$marker'"; fail=1; }
-          done <<'EOF'
-          hermes_cli/auth.py:commandcode-oauth
-          hermes_cli/auth_commands.py:commandcode-oauth
-          hermes_cli/runtime_provider.py:commandcode-oauth
-          hermes_cli/models.py:commandcode-oauth
-          hermes_cli/models_catalog_static.py:commandcode-oauth
-          hermes_cli/model_setup_flows.py:commandcode-oauth
-          hermes_cli/doctor_config.py:commandcode-oauth
-          hermes_cli/inventory.py:is_provider_enabled
-          agent/auxiliary_client.py:commandcode-oauth
-          agent/chat_completion_helpers.py:commandcode-oauth
-          plugins/model-providers/commandcode/__init__.py:commandcode-oauth
-          EOF
-          exit "$fail"
-
-      - name: Compile the patched modules
-        run: |
-          python3 -m py_compile \
-            hermes_cli/auth_commandcode.py \
-            hermes_cli/auth.py \
-            hermes_cli/runtime_provider.py \
-            hermes_cli/models.py \
-            hermes_cli/models_catalog_static.py \
-            agent/commandcode_alpha_adapter.py \
-            agent/auxiliary_client.py \
-            agent/chat_completion_helpers.py

@@ -166,13 +166,6 @@ _spotify_err = _provider_error_factory("spotify")
 _qwen_err = _provider_error_factory("qwen-oauth")
 _minimax_err = _provider_error_factory("minimax-oauth")
 _openrouter_err = _provider_error_factory("openrouter")
-_commandcode_err = _provider_error_factory("commandcode")
-_commandcode_oauth_err = _provider_error_factory("commandcode-oauth")
-
-DEFAULT_COMMANDCODE_BASE_URL = "https://api.commandcode.ai/provider/v1"
-COMMANDCODE_STUDIO_URL = "https://commandcode.ai"
-COMMANDCODE_WHOAMI_URL = "https://api.commandcode.ai/alpha/whoami"
-COMMANDCODE_CALLBACK_PORT = 5959
 
 
 def _decode_jwt_claims(token: Any) -> Dict[str, Any]:
